@@ -46,7 +46,14 @@ public:
 
 		sample_input(inputs);
 
-		run();
+		if (m_counting_up) {
+			m_counting_up = false;
+			IRQHandler();
+		
+		} else {
+			m_counting_up = true;
+			run();
+		}
 
 		fresh_output(&outputs);
 	}
@@ -93,6 +100,8 @@ private:
 	 */
 	void sample_input(ArgumentList& inputs);
 
+	void IRQHandler();
+
 	void run();
 
 	void fresh_output(ArgumentList *outputs);
@@ -131,24 +140,19 @@ private:
 	float m_position{0};
 
 	double m_ts_now{0};
-	double m_ts_last{0};
+	double m_ts_sample{0};
 
 	struct bldc m_bldc;
 	struct motor_parameters m_motor_param;
+
+	bool m_counting_up{true}; /*!< 模拟当前 PWM 计数方向: true - 向上, false-向下*/
 
 	ofstream m_csv;
 };
 
 void MexFunction::run()
 {
-	double ts_diff = m_ts_now - m_ts_last;
-
-	// 更新传感器参数
-    bldc_sample_voltage_handler(&m_bldc, NULL, m_vbus);
-    bldc_sample_encoder_handler(&m_bldc, m_theta_mach, m_omega_mach);
-
-    // 更新采样电流
-    bldc_sample_current_handler(&m_bldc, m_voltage_shunt);
+	double ts_diff = m_ts_now - m_ts_sample;
 
     bldc_do_checks(&m_bldc);
 
@@ -161,9 +165,19 @@ void MexFunction::run()
     bldc_sample_current_calibrator_handler(&m_bldc, NULL, ts_diff);
     
     // 运行电流环
-    bldc_run(&m_bldc, ts_diff, ts_diff);
+    bldc_run(&m_bldc, ts_diff, ts_diff, 2 * ts_diff);
+}
 
-	m_ts_last = m_ts_now;
+void MexFunction::IRQHandler()
+{
+	// 更新传感器参数
+    bldc_sample_voltage_handler(&m_bldc, NULL, m_vbus);
+    bldc_sample_encoder_handler(&m_bldc, m_theta_mach, m_omega_mach);
+
+    // 更新采样电流
+    bldc_sample_current_handler(&m_bldc, m_voltage_shunt);
+
+	m_ts_sample = m_ts_now;
 }
 
 void MexFunction::init()
@@ -187,6 +201,8 @@ void MexFunction::init()
 
 	params->current_controller_bandwidth = 2 * M_PI / fminf(Tq, Td);
 
+	params->R_wL_FF_enabled = params->b_EMF_FF_enabled = true;
+
 	bldc_init(&m_bldc, &m_motor_param);
 }
 
@@ -200,7 +216,6 @@ void MexFunction::sample_input(ArgumentList& inputs)
 
 
 	// 更新时间
-	m_ts_last = m_ts_now;
 	m_ts_now = clock[0];
 
 	// 电流电压
@@ -239,7 +254,8 @@ void MexFunction::fresh_output(ArgumentList *op)
 
     const float *i_alpha_beta_meas = foc_dbg_i_alpha_beta_measured(foc);
     const float *idq_meas = foc_dbg_idq_meas(foc);
-    const float *vdq = foc_dbg_vdq(foc);
+    const float *vdq = foc_dbg_vdq_final(foc);
+	const float *vdq_sp = foc_dbg_vdq(foc);
     const float *v_alpha_beta_final = foc_dbg_v_alpha_beta_final(foc);
 
 	outputs[0] = factoryObject.createArray(ArrayDimensions{3},
@@ -251,8 +267,10 @@ void MexFunction::fresh_output(ArgumentList *op)
 	);
 	outputs[1] = factoryObject.createArray(ArrayDimensions{2},
 		{
-			(double)i_alpha_beta_meas[0],
-			(double)i_alpha_beta_meas[1]
+			// (double)i_alpha_beta_meas[0],
+			// (double)i_alpha_beta_meas[1]
+			(double)foc->id_pi.integral,
+			(double)foc->iq_pi.integral,
 		}
 	);
 	outputs[2] = factoryObject.createArray(ArrayDimensions{2},
@@ -263,17 +281,23 @@ void MexFunction::fresh_output(ArgumentList *op)
 	);
 	outputs[3] = factoryObject.createArray(ArrayDimensions{2},
 		{
+			(double)foc_dbg_id_err(foc),
+			(double)foc_dbg_iq_err(foc),
+		}
+	);
+	outputs[4] = factoryObject.createArray(ArrayDimensions{2},
+		{
 			(double)vdq[0],
 			(double)vdq[1],
 		}
 	);
-	outputs[4] = factoryObject.createArray(ArrayDimensions{2},
+	outputs[5] = factoryObject.createArray(ArrayDimensions{2},
 		{
 			(double)v_alpha_beta_final[0],
 			(double)v_alpha_beta_final[1],
 		}
 	);
-	outputs[5] = factoryObject.createArray(ArrayDimensions{3},
+	outputs[6] = factoryObject.createArray(ArrayDimensions{3},
 		{
 			(double)duty_cycle[0],
 			(double)duty_cycle[1],
