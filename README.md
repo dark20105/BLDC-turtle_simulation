@@ -48,3 +48,24 @@
 
 - 参考资料：
 Ti InstaSPIN-FOC 和 InstaSPIN-MOTION 用户手册: https://www.ti.com.cn/cn/lit/ug/zhcu083i/zhcu083i.pdf
+
+## mex 编译
+
+项目中使用 CMake 管理 C/C++ 子项目，编译所需环境如下：
+
+- CMake: 3.19
+- CMake generator: Ninja/Make/...
+- C++: C++17
+- C: C11
+
+### 编译步骤
+
+1. 项目根目录执行命令：
+```sh
+cmake -S . -B build -G Ninja
+```
+
+2. 项目根目录执行命令：
+```sh
+cmake --build build
+```
